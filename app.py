@@ -33,7 +33,7 @@ state = {
     "crash_count": 0, "last_real": 1.0, "next_pred": 1.0, "uncertainty": 0.0,
     "signal": "🔴 ATTENTE", "seuil_ejection": 1.0, "solde": 1000.0,
     "winrate": 0.0, "trades": 0, "pi_distribution": [100.0, 0.0, 0.0], 
-    "balance_history": [1000.0], "success_stats": [0, 0]
+    "balance_history": [1000.0], "success_stats": [0, 0], "crash_history": []
 }
 
 class ConnectionManager:
@@ -168,6 +168,8 @@ async def receive_crash(data: dict):
 
         state["crash_count"] += 1
         state["last_real"] = mult
+        state["crash_history"].append(mult)
+        state["crash_history"] = state["crash_history"][-20:]
 
         eng_sequences.append(process_features(mult, ts))
 
