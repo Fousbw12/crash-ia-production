@@ -159,6 +159,62 @@ async def listen_cdp():
                             await manager.broadcast(state)
         except: await asyncio.sleep(2)
 
+
+@app.post("/api/crash")
+async def receive_crash(data: dict):
+    try:
+        mult = float(data.get("multiplier"))
+        ts = float(data.get("ts", time.time() * 1000))
+
+        state["crash_count"] += 1
+        state["last_real"] = mult
+
+        eng_sequences.append(process_features(mult, ts))
+
+        if len(eng_sequences) == WINDOW_SIZE:
+            with torch.no_grad():
+                inputs = torch.tensor(
+                    list(eng_sequences),
+                    dtype=torch.float32
+                ).unsqueeze(0).to(device)
+
+                pi, mu, sigma = model(inputs)
+
+                pi = pi.squeeze(0).numpy()
+                mu = mu.squeeze(0).numpy()
+                sigma = sigma.squeeze(0).numpy()
+
+            point_log_attendu = np.sum(pi * mu)
+            point_exact_determine = descale(point_log_attendu)
+
+            incertitude = math.sqrt(
+                np.sum(
+                    pi * (
+                        sigma**2 +
+                        (mu - point_log_attendu)**2
+                    )
+                )
+            )
+
+            state["next_pred"] = round(point_exact_determine, 2)
+            state["uncertainty"] = round(incertitude, 4)
+            state["pi_distribution"] = [
+                round(x * 100, 1) for x in pi
+            ]
+
+        await manager.broadcast(state)
+
+        return {
+            "ok": True,
+            "multiplier": mult
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
+        }
+
 @app.on_event("startup")
 async def startup_event(): asyncio.create_task(listen_cdp())
 
