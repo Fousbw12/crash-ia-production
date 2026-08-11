@@ -163,6 +163,9 @@ while True:
 
             url = params.get("url", "")
 
+            print("\n[WEBSOCKET CRÉÉ]")
+            print(url)
+
             if "sockets/crash" in url.lower():
 
                 if url not in crash_websockets:
