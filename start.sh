@@ -61,6 +61,38 @@ echo "Pages CDP :"
 cat /tmp/cdp_pages.json
 
 echo
+
+echo
+echo "=========================================="
+echo "DIAGNOSTIC PAGE CRASH"
+echo "=========================================="
+
+python3 - <<'PY2'
+import requests
+import json
+
+try:
+    pages = requests.get("http://127.0.0.1:9030/json", timeout=5).json()
+
+    for p in pages:
+        if p.get("type") == "page":
+            print("URL :", p.get("url"))
+            print("Titre :", repr(p.get("title")))
+            print("CDP :", p.get("webSocketDebuggerUrl"))
+except Exception as e:
+    print("Erreur CDP :", e)
+PY2
+
+echo
+echo "LOG CHROMIUM - SharedWorker / WebSocket / erreurs :"
+
+grep -iE "SharedWorker|WebSocket|error|failed|exception|blocked|refused|denied" \
+    /tmp/chromium.log | tail -100 || true
+
+echo
+echo "FIN DU DIAGNOSTIC"
+echo "=========================================="
+
 echo "Démarrage du captureur..."
 
 while true
