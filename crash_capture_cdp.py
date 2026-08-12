@@ -166,7 +166,7 @@ while True:
             print("\n[WEBSOCKET CRÉÉ]")
             print(url)
 
-            if "sockets/crash" in url.lower():
+            if "websocket" in url.lower() or "sockets/crash" in url.lower():
 
                 if url not in crash_websockets:
 
@@ -194,6 +194,9 @@ while True:
                 "payloadData",
                 ""
             )
+
+            if payload.strip():
+                print("\n[WS FRAME] " + payload[:1000])
 
             if "OnCrash" in payload:
 
@@ -240,6 +243,9 @@ while True:
                 "payloadData",
                 ""
             )
+
+            if payload.strip():
+                print("\n[WS FRAME] " + payload[:1000])
 
             if "OnCrash" in payload:
 
