@@ -1,98 +1,70 @@
-import requests
-import websocket
 import json
 import time
-import re
-import sys
+import urllib.request
+import websocket
 
-CDP_HTTP = "http://127.0.0.1:9030"
+CDP = "http://127.0.0.1:9030"
 
-RAILWAY_URL = "https://web-production-53fd7.up.railway.app/api/crash"
+print("=" * 70)
+print("     CAPTURE CRASH - CDP WEBSOCKET")
+print("=" * 70)
 
-def envoyer_railway(multiplier, ts=None):
+def get_targets():
     try:
-        data = {
-            "multiplier": float(multiplier),
-            "ts": float(ts) if ts else time.time() * 1000
-        }
-
-        r = requests.post(
-            RAILWAY_URL,
-            json=data,
-            timeout=10
-        )
-
-        if r.ok:
-            print("  → Railway : OK")
-        else:
-            print(f"  → Railway : HTTP {r.status_code}")
-
+        with urllib.request.urlopen(CDP + "/json", timeout=5) as r:
+            return json.loads(r.read())
     except Exception as e:
-        print("  → Railway : erreur", e)
+        print("Erreur /json :", e)
+        return []
 
+targets = get_targets()
 
+print("\nTargets CDP détectés :")
 
-print("=" * 70)
-print("     CAPTURE CRASH - CHROMIUM + CDP")
-print("=" * 70)
+for t in targets:
+    print(
+        "TYPE =", t.get("type"),
+        "| TITLE =", repr(t.get("title")),
+        "| URL =", t.get("url")
+    )
 
-# ------------------------------------------------------------
-# Recherche de la page Chromium
-# ------------------------------------------------------------
+# IMPORTANT :
+# On prend UNIQUEMENT le vrai target "page" du jeu Crash.
+target = None
 
-try:
-    pages = requests.get(
-        CDP_HTTP + "/json",
-        timeout=5
-    ).json()
-except Exception as e:
-    print("\nERREUR : Chromium n'est pas accessible.")
-    print("Vérifie que Chromium est lancé sur le port 9030.")
-    print("Détail :", e)
-    sys.exit(1)
-
-page = None
-
-for p in pages:
-    if p.get("type") == "page":
-        page = p
+for t in targets:
+    if (
+        t.get("type") == "page"
+        and "1xbetmaroc.com" in t.get("url", "")
+        and "/games/crash" in t.get("url", "")
+    ):
+        target = t
         break
 
-if page is None:
-    print("\nAucune page Chromium trouvée.")
-    sys.exit(1)
+if not target:
+    print("\nERREUR : target Crash introuvable.")
+    print("Attente puis nouvelle tentative...")
+    time.sleep(5)
+    raise SystemExit(1)
 
-print("\nPage Chromium détectée")
-print("URL    :", page.get("url"))
-print("Titre  :", page.get("title"))
-print("CDP    :", page.get("webSocketDebuggerUrl"))
+ws_url = target["webSocketDebuggerUrl"]
 
-# ------------------------------------------------------------
-# Connexion CDP
-# ------------------------------------------------------------
+print("\nPAGE CRASH TROUVÉE")
+print("URL :", target.get("url"))
+print("CDP :", ws_url)
 
 try:
-    ws = websocket.create_connection(
-        page["webSocketDebuggerUrl"],
-        origin="http://127.0.0.1:9030",
-        timeout=5
-    )
+    ws = websocket.create_connection(ws_url, timeout=2)
 except Exception as e:
-    print("\nERREUR : connexion CDP impossible.")
-    print(e)
-    sys.exit(1)
+    print("Erreur connexion CDP :", e)
+    raise SystemExit(1)
 
 print("\nConnexion CDP : OK")
 
-# ------------------------------------------------------------
-# Active Network
-# ------------------------------------------------------------
-
 counter = 0
 
-def send_cdp(method, params=None):
+def send(method, params=None):
     global counter
-
     counter += 1
 
     msg = {
@@ -104,169 +76,156 @@ def send_cdp(method, params=None):
         msg["params"] = params
 
     ws.send(json.dumps(msg))
+    return counter
 
+# Activer Network AVANT le reload.
+send("Network.enable", {
+    "maxTotalBufferSize": 100000000,
+    "maxResourceBufferSize": 10000000
+})
 
-send_cdp("Network.enable")
+send("Page.enable")
 
-print("\nSurveillance réseau activée.")
-print("Ouvre maintenant le jeu Crash dans Chromium.")
+# Recharger la page maintenant que Network est activé.
+print("\nRechargement de la page Crash...")
+send("Page.reload", {
+    "ignoreCache": True
+})
+
+print("Surveillance WebSocket activée.")
 print("=" * 70)
 
-# ------------------------------------------------------------
-# Variables
-# ------------------------------------------------------------
+websockets = set()
 
-crash_websockets = set()
-crash_count = 0
-
-# ------------------------------------------------------------
-# Extraction du multiplicateur
-# ------------------------------------------------------------
-
-def extraire_multiplicateur(payload):
-
-    # Cherche le champ JSON "f"
-    match = re.search(
-        r'"f"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-        payload
-    )
-
-    if match:
-        return match.group(1)
-
-    return None
-
-
-# ------------------------------------------------------------
-# Boucle principale
-# ------------------------------------------------------------
+last_message = time.time()
 
 while True:
-
     try:
+        ws.settimeout(2)
 
-        message = ws.recv()
-
-        if not message:
+        try:
+            raw = ws.recv()
+        except websocket.WebSocketTimeoutException:
+            # Évite que le programme s'arrête simplement
+            # parce qu'aucun événement n'est arrivé pendant 2 secondes.
+            if time.time() - last_message > 10:
+                print("Toujours en attente des événements réseau...")
+                last_message = time.time()
             continue
 
-        data = json.loads(message)
+        if not raw:
+            continue
 
-        method = data.get("method", "")
-        params = data.get("params", {})
+        last_message = time.time()
 
-        # ====================================================
-        # NOUVEAU WEBSOCKET
-        # ====================================================
+        try:
+            msg = json.loads(raw)
+        except Exception:
+            continue
+
+        method = msg.get("method", "")
+        params = msg.get("params", {})
+
+        # ==========================================================
+        # WEBSOCKET CRÉÉ
+        # ==========================================================
 
         if method == "Network.webSocketCreated":
 
             url = params.get("url", "")
 
-            print("\n[WEBSOCKET CRÉÉ]")
+            print("\n" + "=" * 70)
+            print("WEBSOCKET DÉTECTÉ")
             print(url)
+            print("=" * 70)
 
-            if "websocket" in url.lower() or "sockets/crash" in url.lower():
+            websockets.add(params.get("requestId"))
 
-                if url not in crash_websockets:
+            if "sockets/crash" in url.lower():
+                print("\n*** WEBSOCKET CRASH TROUVÉ ***")
+                print(url)
+                print("*** FIN URL ***\n")
 
-                    crash_websockets.add(url)
-
-                    print("\n")
-                    print("=" * 70)
-                    print("WEBSOCKET CRASH DÉTECTÉ")
-                    print("=" * 70)
-                    print(url)
-                    print("=" * 70)
-
-        # ====================================================
+        # ==========================================================
         # FRAME WEBSOCKET REÇUE
-        # ====================================================
+        # ==========================================================
 
         elif method == "Network.webSocketFrameReceived":
 
-            response = params.get(
-                "response",
-                {}
+            request_id = params.get("requestId")
+
+            payload = (
+                params
+                .get("response", {})
+                .get("payloadData", "")
             )
 
-            payload = response.get(
-                "payloadData",
-                ""
-            )
+            if request_id not in websockets:
+                continue
 
-            if payload.strip():
-                print("\n[WS FRAME] " + payload[:1000])
+            print("\nWEBSOCKET FRAME :")
+            print(payload[:2000])
 
+            # Recherche OnCrash
             if "OnCrash" in payload:
 
-                crash_count += 1
-
-                multiplicateur = extraire_multiplicateur(
-                    payload
-                )
-
-                heure = time.strftime("%H:%M:%S")
-
-                print(
-                    f"\n[{heure}] CRASH #{crash_count}"
-                )
-
-                if multiplicateur:
-                    print(
-                        f"MULTIPLICATEUR : {multiplicateur}x"
-                    )
-
-                    envoyer_railway(
-                        multiplicateur,
-                        time.time() * 1000
-                    )
-                else:
-                    print(
-                        "MULTIPLICATEUR : non extrait"
-                    )
-
-                print("DONNÉE :", payload)
-
-        # ====================================================
-        # FRAME ENVOYÉE
-        # ====================================================
-
-        elif method == "Network.webSocketFrameSent":
-
-            response = params.get(
-                "response",
-                {}
-            )
-
-            payload = response.get(
-                "payloadData",
-                ""
-            )
-
-            if payload.strip():
-                print("\n[WS FRAME] " + payload[:1000])
-
-            if "OnCrash" in payload:
-
-                print("\n[ONCRASH ENVOYÉ]")
+                print("\n" + "#" * 70)
+                print("              ONCRASH DÉTECTÉ")
+                print("#" * 70)
                 print(payload)
+                print("#" * 70)
 
-    except websocket.WebSocketTimeoutException:
-        continue
+                try:
+                    data = json.loads(payload)
+
+                    args = data.get("arguments", [])
+
+                    if args:
+                        game = args[0]
+
+                        if "f" in game:
+                            print(
+                                "\nMULTIPLICATEUR :",
+                                game["f"],
+                                "x"
+                            )
+
+                        if "l" in game:
+                            print(
+                                "ID JEU :",
+                                game["l"]
+                            )
+
+                except Exception:
+                    pass
+
+        # ==========================================================
+        # ERREUR WEBSOCKET
+        # ==========================================================
+
+        elif method == "Network.webSocketFrameError":
+
+            print(
+                "\nERREUR WEBSOCKET :",
+                params
+            )
+
+        elif method == "Network.webSocketClosed":
+
+            request_id = params.get("requestId")
+
+            if request_id in websockets:
+                print("\nWebSocket fermé :", request_id)
 
     except KeyboardInterrupt:
-
-        print("\n\nArrêt du programme.")
-
-        try:
-            ws.close()
-        except:
-            pass
-
+        print("\nArrêt demandé.")
         break
 
     except Exception as e:
+        print("\nErreur capture :", e)
+        time.sleep(2)
 
-        print("\nErreur :", e)
-        time.sleep(1)
+try:
+    ws.close()
+except:
+    pass
