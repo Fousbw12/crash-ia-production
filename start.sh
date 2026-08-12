@@ -24,11 +24,13 @@ chromium \
     --no-sandbox \
     --disable-dev-shm-usage \
     --disable-gpu \
+    --enable-logging=stderr \
+    --v=1 \
     --disable-software-rasterizer \
     --disable-background-networking \
     --disable-background-timer-throttling \
     --disable-renderer-backgrounding \
-    --disable-features=Translate,BackForwardCache \
+    --disable-features=Translate,BackForwardCache,OptimizationHints,MediaRouter \
     --remote-debugging-port=9030 \
     --remote-debugging-address=127.0.0.1 \
     --remote-allow-origins=* \
