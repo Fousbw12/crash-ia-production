@@ -1,233 +1,135 @@
-import requests
-import websocket
 import json
 import time
-import re
+import urllib.request
+import websocket
 import sys
+import re
 
-CDP_HTTP = "http://127.0.0.1:9030"
+CDP = "http://127.0.0.1:9030"
 
-print("=" * 70)
-print("     CAPTURE CRASH - CHROMIUM + CDP")
-print("=" * 70)
+print("=" * 70, flush=True)
+print("     CRASH CAPTURE - RAILWAY CDP", flush=True)
+print("=" * 70, flush=True)
 
-# ------------------------------------------------------------
-# Recherche de la page Chromium
-# ------------------------------------------------------------
+def get_page():
+    try:
+        with urllib.request.urlopen(CDP + "/json", timeout=10) as r:
+            pages = json.loads(r.read())
+        for p in pages:
+            if p.get("type") == "page" and "1xbetmaroc.com" in p.get("url", ""):
+                return p
+        for p in pages:
+            if p.get("type") == "page":
+                return p
+    except Exception as e:
+        print("Erreur CDP :", e, flush=True)
+    return None
 
-try:
-    pages = requests.get(
-        CDP_HTTP + "/json",
-        timeout=5
-    ).json()
-except Exception as e:
-    print("\nERREUR : Chromium n'est pas accessible.")
-    print("Vérifie que Chromium est lancé sur le port 9030.")
-    print("Détail :", e)
+page = get_page()
+
+if not page:
+    print("Aucune page Chromium trouvée.", flush=True)
     sys.exit(1)
 
-page = None
-
-for p in pages:
-    if p.get("type") == "page":
-        page = p
-        break
-
-if page is None:
-    print("\nAucune page Chromium trouvée.")
-    sys.exit(1)
-
-print("\nPage Chromium détectée")
-print("URL    :", page.get("url"))
-print("Titre  :", page.get("title"))
-print("CDP    :", page.get("webSocketDebuggerUrl"))
-
-# ------------------------------------------------------------
-# Connexion CDP
-# ------------------------------------------------------------
+print("PAGE :", page.get("url"), flush=True)
+print("CDP  :", page.get("webSocketDebuggerUrl"), flush=True)
 
 try:
     ws = websocket.create_connection(
         page["webSocketDebuggerUrl"],
         origin="http://127.0.0.1:9030",
-        timeout=5
+        timeout=30
     )
 except Exception as e:
-    print("\nERREUR : connexion CDP impossible.")
-    print(e)
+    print("Connexion CDP impossible :", e, flush=True)
     sys.exit(1)
 
-print("\nConnexion CDP : OK")
-
-# ------------------------------------------------------------
-# Active Network
-# ------------------------------------------------------------
+print("Connexion CDP : OK", flush=True)
 
 counter = 0
 
-def send_cdp(method, params=None):
+def send(method, params=None):
     global counter
-
     counter += 1
-
-    msg = {
-        "id": counter,
-        "method": method
-    }
-
-    if params is not None:
+    msg = {"id": counter, "method": method}
+    if params:
         msg["params"] = params
-
     ws.send(json.dumps(msg))
 
+send("Network.enable")
 
-send_cdp("Network.enable")
+print("Network.enable : OK", flush=True)
+print("ATTENTE DES WEBSOCKETS...", flush=True)
+print("=" * 70, flush=True)
 
-print("\nSurveillance réseau activée.")
-print("Ouvre maintenant le jeu Crash dans Chromium.")
-print("=" * 70)
-
-# ------------------------------------------------------------
-# Variables
-# ------------------------------------------------------------
-
-crash_websockets = set()
+crash_urls = set()
 crash_count = 0
 
-# ------------------------------------------------------------
-# Extraction du multiplicateur
-# ------------------------------------------------------------
-
-def extraire_multiplicateur(payload):
-
-    # Cherche le champ JSON "f"
-    match = re.search(
-        r'"f"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-        payload
-    )
-
-    if match:
-        return match.group(1)
-
-    return None
-
-
-# ------------------------------------------------------------
-# Boucle principale
-# ------------------------------------------------------------
+def multiplier(payload):
+    m = re.search(r'"f"\s*:\s*([0-9]+(?:\.[0-9]+)?)', payload)
+    return m.group(1) if m else None
 
 while True:
-
     try:
+        msg = ws.recv()
 
-        message = ws.recv()
-
-        if not message:
+        if not msg:
             continue
 
-        data = json.loads(message)
-
+        data = json.loads(msg)
         method = data.get("method", "")
         params = data.get("params", {})
 
-        # ====================================================
-        # NOUVEAU WEBSOCKET
-        # ====================================================
-
         if method == "Network.webSocketCreated":
-
             url = params.get("url", "")
 
+            print("\nWEBSOCKET CRÉÉ :", url, flush=True)
+
             if "sockets/crash" in url.lower():
-
-                if url not in crash_websockets:
-
-                    crash_websockets.add(url)
-
-                    print("\n")
-                    print("=" * 70)
-                    print("WEBSOCKET CRASH DÉTECTÉ")
-                    print("=" * 70)
-                    print(url)
-                    print("=" * 70)
-
-        # ====================================================
-        # FRAME WEBSOCKET REÇUE
-        # ====================================================
+                crash_urls.add(url)
+                print("=" * 70, flush=True)
+                print("WEBSOCKET CRASH DÉTECTÉ", flush=True)
+                print(url, flush=True)
+                print("=" * 70, flush=True)
 
         elif method == "Network.webSocketFrameReceived":
-
-            response = params.get(
-                "response",
-                {}
-            )
-
-            payload = response.get(
-                "payloadData",
-                ""
-            )
+            response = params.get("response", {})
+            payload = response.get("payloadData", "")
 
             if "OnCrash" in payload:
-
                 crash_count += 1
+                value = multiplier(payload)
 
-                multiplicateur = extraire_multiplicateur(
-                    payload
-                )
-
-                heure = time.strftime("%H:%M:%S")
-
+                print("\n" + "=" * 70, flush=True)
+                print("CRASH #", crash_count, flush=True)
                 print(
-                    f"\n[{heure}] CRASH #{crash_count}"
+                    "MULTIPLICATEUR : "
+                    + (str(value) + "x" if value else "NON EXTRAIT"),
+                    flush=True
                 )
+                print("DONNÉE :", payload, flush=True)
+                print("=" * 70, flush=True)
 
-                if multiplicateur:
-                    print(
-                        f"MULTIPLICATEUR : {multiplicateur}x"
-                    )
-                else:
-                    print(
-                        "MULTIPLICATEUR : non extrait"
-                    )
-
-                print("DONNÉE :", payload)
-
-        # ====================================================
-        # FRAME ENVOYÉE
-        # ====================================================
-
-        elif method == "Network.webSocketFrameSent":
-
-            response = params.get(
-                "response",
-                {}
+        elif method == "Network.webSocketClosed":
+            print(
+                "WebSocket fermé :",
+                params.get("reason", ""),
+                flush=True
             )
-
-            payload = response.get(
-                "payloadData",
-                ""
-            )
-
-            if "OnCrash" in payload:
-
-                print("\n[ONCRASH ENVOYÉ]")
-                print(payload)
 
     except websocket.WebSocketTimeoutException:
+        print(
+            "[",
+            time.strftime("%H:%M:%S"),
+            "] Toujours en attente du WebSocket...",
+            flush=True
+        )
         continue
 
     except KeyboardInterrupt:
-
-        print("\n\nArrêt du programme.")
-
-        try:
-            ws.close()
-        except:
-            pass
-
+        print("\nArrêt.", flush=True)
         break
 
     except Exception as e:
-
-        print("\nErreur :", e)
-        time.sleep(1)
+        print("Erreur capture :", e, flush=True)
+        time.sleep(2)
