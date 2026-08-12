@@ -27,7 +27,6 @@ chromium \
     --enable-logging=stderr \
     --v=1 \
     --disable-software-rasterizer \
-    --disable-background-networking \
     --disable-background-timer-throttling \
     --disable-renderer-backgrounding \
     --disable-features=Translate,BackForwardCache,OptimizationHints,MediaRouter \
