@@ -6,66 +6,60 @@ import sys
 import re
 
 CDP_HTTP = "http://127.0.0.1:9030"
+CRASH_URL = "1xbetmaroc.com"
+CRASH_SOCKET = "sockets/crash"
 
 print("=" * 70, flush=True)
 print("     CRASH CAPTURE - RAILWAY CDP", flush=True)
 print("=" * 70, flush=True)
 
 
-def trouver_page():
+def get_targets():
     try:
         with urllib.request.urlopen(
             CDP_HTTP + "/json",
             timeout=10
         ) as r:
-            pages = json.loads(r.read())
-
+            return json.loads(r.read())
     except Exception as e:
-        print("ERREUR CDP :", e, flush=True)
-        return None
+        print("ERREUR /json :", e, flush=True)
+        return []
 
-    # Cherche UNIQUEMENT la vraie page Crash.
-    # Ne prend jamais /block ni chrome://...
+
+def trouver_page():
+    pages = get_targets()
+
     for p in pages:
         url = p.get("url", "")
-
         if (
             p.get("type") == "page"
-            and "1xbetmaroc.com" in url
+            and CRASH_URL in url
             and "/games/crash" in url
         ):
             return p
 
-    print("Aucune page /games/crash trouvée.", flush=True)
+    print("Aucune page Crash trouvée.", flush=True)
 
     for p in pages:
         print(
-            "PAGE :",
+            "TARGET :",
             p.get("type"),
-            p.get("url"),
+            "|",
+            p.get("url", ""),
             flush=True
         )
 
     return None
 
 
-# ------------------------------------------------------------
-# Recherche de la page Crash
-# ------------------------------------------------------------
-
 page = trouver_page()
 
 if page is None:
-    print("ERREUR : page Crash introuvable.", flush=True)
     sys.exit(1)
 
 print("PAGE :", page.get("url"), flush=True)
 print("CDP  :", page.get("webSocketDebuggerUrl"), flush=True)
 
-
-# ------------------------------------------------------------
-# Connexion CDP
-# ------------------------------------------------------------
 
 try:
     ws = websocket.create_connection(
@@ -73,94 +67,154 @@ try:
         origin="http://127.0.0.1:9030",
         timeout=5
     )
-
 except Exception as e:
     print("ERREUR connexion CDP :", e, flush=True)
     sys.exit(1)
 
+
 print("Connexion CDP : OK", flush=True)
-
-
-# ------------------------------------------------------------
-# Active Network
-# ------------------------------------------------------------
 
 counter = 0
 
 
-def send_cdp(method, params=None):
+def send(method, params=None):
     global counter
 
     counter += 1
 
-    message = {
+    msg = {
         "id": counter,
         "method": method
     }
 
     if params is not None:
-        message["params"] = params
+        msg["params"] = params
 
-    ws.send(json.dumps(message))
+    ws.send(json.dumps(msg))
 
 
-send_cdp("Network.enable")
+# Active les événements réseau.
+send("Network.enable")
+
+# Active également les événements Target.
+send(
+    "Target.setDiscoverTargets",
+    {"discover": True}
+)
 
 print("Network.enable : OK", flush=True)
-print("ATTENTE DES WEBSOCKETS...", flush=True)
+print("Target discovery : OK", flush=True)
+print("SURVEILLANCE CDP...", flush=True)
+print("=" * 70, flush=True)
 
-
-# ------------------------------------------------------------
-# Variables
-# ------------------------------------------------------------
 
 crash_websockets = set()
 crash_count = 0
+last_message = time.time()
 
 
 def extraire_multiplicateur(payload):
-    match = re.search(
-        r'"f"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-        payload
-    )
 
-    if match:
-        return match.group(1)
+    # Format connu :
+    # {"type":1,"target":"OnCrash",
+    #  "arguments":[{"l":123,"f":3.02,"ts":123}]}
+
+    patterns = [
+        r'"f"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        r'"multiplier"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        r'"multiplier"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"',
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(pattern, payload)
+
+        if match:
+            return match.group(1)
 
     return None
 
 
-# ------------------------------------------------------------
-# Surveillance
-# ------------------------------------------------------------
+def traiter_payload(payload, direction="RECU"):
 
-dernier_message = time.time()
+    global crash_count
+
+    if "OnCrash" not in payload:
+        return
+
+    crash_count += 1
+
+    multiplicateur = extraire_multiplicateur(payload)
+
+    heure = time.strftime("%H:%M:%S")
+
+    print("", flush=True)
+    print("=" * 70, flush=True)
+    print(
+        f"[{heure}] CRASH #{crash_count}",
+        flush=True
+    )
+
+    if multiplicateur:
+
+        print(
+            f"MULTIPLICATEUR : {multiplicateur}x",
+            flush=True
+        )
+
+    else:
+
+        print(
+            "MULTIPLICATEUR : non extrait",
+            flush=True
+        )
+
+    print(
+        "DIRECTION :",
+        direction,
+        flush=True
+    )
+
+    print(
+        "DONNÉE :",
+        payload,
+        flush=True
+    )
+
+    print("=" * 70, flush=True)
+
 
 while True:
 
     try:
+
         message = ws.recv()
 
         if not message:
             continue
 
-        dernier_message = time.time()
+        last_message = time.time()
 
         data = json.loads(message)
 
         method = data.get("method", "")
         params = data.get("params", {})
 
-
-        # ----------------------------------------------------
+        # --------------------------------------------------
         # WebSocket créé
-        # ----------------------------------------------------
+        # --------------------------------------------------
 
         if method == "Network.webSocketCreated":
 
             url = params.get("url", "")
 
-            if "sockets/crash" in url.lower():
+            print(
+                "[WS CRÉÉ]",
+                url,
+                flush=True
+            )
+
+            if CRASH_SOCKET in url.lower():
 
                 if url not in crash_websockets:
 
@@ -172,91 +226,92 @@ while True:
                     print(url, flush=True)
                     print("=" * 70, flush=True)
 
-
-        # ----------------------------------------------------
+        # --------------------------------------------------
         # Frame reçue
-        # ----------------------------------------------------
+        # --------------------------------------------------
 
         elif method == "Network.webSocketFrameReceived":
 
-            response = params.get("response", {})
+            response = params.get(
+                "response",
+                {}
+            )
 
             payload = response.get(
                 "payloadData",
                 ""
             )
 
-            if "OnCrash" in payload:
+            traiter_payload(
+                payload,
+                "RECU"
+            )
 
-                crash_count += 1
-
-                multiplicateur = extraire_multiplicateur(
-                    payload
-                )
-
-                heure = time.strftime("%H:%M:%S")
-
-                print(
-                    f"[{heure}] CRASH #{crash_count}",
-                    flush=True
-                )
-
-                if multiplicateur:
-
-                    print(
-                        f"MULTIPLICATEUR : {multiplicateur}x",
-                        flush=True
-                    )
-
-                else:
-
-                    print(
-                        "MULTIPLICATEUR : non extrait",
-                        flush=True
-                    )
-
-                print(
-                    "DONNÉE :",
-                    payload,
-                    flush=True
-                )
-
-
-        # ----------------------------------------------------
+        # --------------------------------------------------
         # Frame envoyée
-        # ----------------------------------------------------
+        # --------------------------------------------------
 
         elif method == "Network.webSocketFrameSent":
 
-            response = params.get("response", {})
+            response = params.get(
+                "response",
+                {}
+            )
 
             payload = response.get(
                 "payloadData",
                 ""
             )
 
-            if "OnCrash" in payload:
+            traiter_payload(
+                payload,
+                "ENVOYE"
+            )
 
-                print(
-                    "[ONCRASH ENVOYÉ]",
-                    payload,
-                    flush=True
-                )
+        # --------------------------------------------------
+        # Nouveaux targets CDP
+        # --------------------------------------------------
 
+        elif method == "Target.targetCreated":
 
-    except websocket.WebSocketTimeoutException:
-
-        if time.time() - dernier_message >= 30:
+            target = params.get(
+                "targetInfo",
+                {}
+            )
 
             print(
-                "[INFO] Toujours en attente du WebSocket...",
+                "[TARGET CRÉÉ]",
+                target.get("type"),
+                target.get("url"),
                 flush=True
             )
 
-            dernier_message = time.time()
+        elif method == "Target.targetInfoChanged":
+
+            target = params.get(
+                "targetInfo",
+                {}
+            )
+
+            print(
+                "[TARGET]",
+                target.get("type"),
+                target.get("url"),
+                flush=True
+            )
+
+    except websocket.WebSocketTimeoutException:
+
+        if time.time() - last_message >= 30:
+
+            print(
+                "[INFO] Surveillance active - aucun événement réseau.",
+                flush=True
+            )
+
+            last_message = time.time()
 
         continue
-
 
     except KeyboardInterrupt:
 
@@ -272,12 +327,11 @@ while True:
 
         break
 
-
     except Exception as e:
 
         print(
             "Erreur captureur :",
-            e,
+            repr(e),
             flush=True
         )
 
