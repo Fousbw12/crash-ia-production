@@ -221,7 +221,7 @@ async def receive_crash(data: dict):
 async def startup_event(): asyncio.create_task(listen_cdp())
 
 @app.get("/")
-async def get_index(request: Request): return templates.TemplateResponse("index.html", {"request": request})
+async def get_index(request: Request): return templates.TemplateResponse(request=request, name="index.html")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
