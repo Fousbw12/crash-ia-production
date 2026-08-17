@@ -109,9 +109,18 @@ async def listen_cdp():
                         payload = data.get("params", {}).get("response", {}).get("payloadData", "")
                         if "OnCrash" in payload:
                             try:
-                                args = json.loads(payload).get("arguments", [{}])
-                                mult, ts = float(args.get("f")), float(args.get("ts"))
-                            except: continue
+                                obj = json.loads(payload)
+                                arguments = obj.get("arguments", [])
+
+                                if not arguments:
+                                    continue
+
+                                crash = arguments[0]
+                                mult = float(crash["f"])
+                                ts = float(crash.get("ts", time.time() * 1000))
+
+                            except Exception:
+                                continue
 
                             state["crash_count"] += 1
                             state["last_real"] = mult
