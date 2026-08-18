@@ -235,7 +235,24 @@ async def get_index(request: Request): return templates.TemplateResponse("index.
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+
     try:
+        # Envoyer immédiatement l'état actuel au navigateur
         await websocket.send_json(state)
-        while True: await websocket.receive_text()
-    except WebSocketDisconnect: manager.disconnect(websocket)
+
+        # Maintenir la connexion ouverte
+        while True:
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+        try:
+            manager.disconnect(websocket)
+        except:
+            pass
+
+    except Exception:
+        try:
+            manager.disconnect(websocket)
+        except:
+            pass
+\n
