@@ -1,0 +1,336 @@
+import asyncio
+import json
+import sqlite3
+import time
+import threading
+import requests
+import websocket
+
+
+DB = "crash_local.db"
+CDP = "http://127.0.0.1:9030"
+PORT = 8081
+
+
+def init_db():
+    con = sqlite3.connect(DB)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS crashes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            multiplier REAL NOT NULL,
+            timestamp INTEGER NOT NULL,
+            raw TEXT
+        )
+    """)
+    con.commit()
+    con.close()
+
+init_db()
+
+HTML = """
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crash - Historique local</title>
+<style>
+body{
+    margin:0;
+    padding:20px;
+    background:#070a12;
+    color:#fff;
+    font-family:Arial,sans-serif;
+}
+h1{text-align:center}
+.status{
+    text-align:center;
+    margin:15px;
+    color:#22c55e;
+}
+.history{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+}
+.item{
+    background:#1e293b;
+    padding:12px 16px;
+    border-radius:10px;
+    font-size:20px;
+    font-weight:bold;
+}
+</style>
+</head>
+<body>
+
+<h1>⚡ Historique Crash</h1>
+
+<div class="status" id="status">
+Connexion CDP...
+</div>
+
+<div class="history" id="history"></div>
+
+<script>
+async function refresh(){
+    try{
+        const r = await fetch('/api/history');
+        const data = await r.json();
+
+        const box = document.getElementById('history');
+        box.innerHTML = '';
+
+        data.history.slice().reverse().forEach(mult => {
+            const el = document.createElement('div');
+            el.className = 'item';
+            el.textContent = Number(mult).toFixed(2) + 'x';
+            box.appendChild(el);
+        });
+
+        document.getElementById('status').textContent =
+            '● Capture locale active — ' +
+            data.history.length +
+            ' multiplicateurs';
+    }catch(e){
+        document.getElementById('status').textContent =
+            '● En attente...';
+    }
+}
+
+setInterval(refresh,1000);
+refresh();
+</script>
+
+</body>
+</html>
+"""
+
+def save_crash(mult, ts, raw):
+    con = sqlite3.connect(DB)
+
+    con.execute(
+        "INSERT INTO crashes(multiplier,timestamp,raw) VALUES(?,?,?)",
+        (mult, int(ts), raw)
+    )
+
+    con.commit()
+    con.close()
+
+    print(
+        f"[LOCAL] MULTIPLICATEUR : {mult:.2f}x",
+        flush=True
+    )
+
+
+
+def send_to_app(mult):
+    try:
+        data = json.dumps({
+            "multiplier": mult,
+            "timestamp": time.time()
+        }).encode()
+
+        req = urllib.request.Request(
+            "http://127.0.0.1:8090/crash",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+
+        urllib.request.urlopen(req, timeout=3).read()
+        print("[APP] MULTIPLICATEUR ENVOYE :", f"{mult:.2f}x", flush=True)
+
+    except Exception as e:
+        print("[APP] Erreur :", e, flush=True)
+
+def find_page():
+    try:
+        pages = requests.get(
+            CDP + "/json",
+            timeout=5
+        ).json()
+    except Exception as e:
+        print("[CDP] Erreur :", e)
+        return None
+
+    for p in pages:
+        if (
+            p.get("type") == "page"
+            and "/games/crash" in p.get("url","")
+        ):
+            return p
+
+    return None
+
+
+
+
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+class Handler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+
+        if path == "/":
+            body = HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/api/history":
+            con = sqlite3.connect(DB)
+            rows = con.execute(
+                "SELECT multiplier FROM crashes ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+            con.close()
+
+            body = json.dumps({
+                "history": [x[0] for x in rows]
+            }).encode()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def capture():
+
+    print("=" * 70)
+    print("       CAPTURE CRASH — 100% LOCALE")
+    print("=" * 70)
+
+    while True:
+
+        page = find_page()
+
+        if not page:
+            print(
+                "[CDP] Page Crash introuvable. "
+                "Ouvre la page Crash dans Chromium."
+            )
+            time.sleep(3)
+            continue
+
+        print("[CDP] PAGE :", page.get("url"))
+
+        try:
+
+            ws = websocket.create_connection(
+                page["webSocketDebuggerUrl"],
+                origin=CDP,
+                timeout=10
+            )
+
+            ws.send(json.dumps({
+                "id":1,
+                "method":"Network.enable"
+            }))
+
+            print("[CDP] CONNECTÉ")
+            print("[CDP] SURVEILLANCE...")
+
+            while True:
+
+                message = ws.recv()
+
+                if not message:
+                    continue
+
+                data = json.loads(message)
+
+                if data.get("method") != \
+                        "Network.webSocketFrameReceived":
+                    continue
+
+                payload = data.get(
+                    "params",
+                    {}
+                ).get(
+                    "response",
+                    {}
+                ).get(
+                    "payloadData",
+                    ""
+                )
+
+                if "OnCrash" not in payload:
+                    continue
+
+                try:
+
+                    obj = json.loads(payload)
+
+                    arguments = obj.get(
+                        "arguments",
+                        []
+                    )
+
+                    if not arguments:
+                        continue
+
+                    crash = arguments[0]
+
+                    mult = float(
+                        crash["f"]
+                    )
+
+                    ts = float(
+                        crash.get(
+                            "ts",
+                            time.time()*1000
+                        )
+                    )
+
+                except Exception:
+                    continue
+
+                print()
+                print("=" * 50)
+                print(
+                    "CRASH :",
+                    f"{mult:.2f}x"
+                )
+                print(
+                    "HEURE :",
+                    time.strftime("%H:%M:%S")
+                )
+                print("=" * 50)
+
+                save_crash(
+                    mult,
+                    ts,
+                    payload
+                )
+
+        except Exception as e:
+
+            print(
+                "[CDP] Déconnexion :",
+                e
+            )
+
+            time.sleep(2)
+
+
+
+def main():
+    capture()
+
+
+if __name__ == "__main__":
+    main()

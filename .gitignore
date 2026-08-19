@@ -1,0 +1,12 @@
+
+# Fichiers locaux / temporaires
+__pycache__/
+*.pyc
+*.log
+*.db
+*.backup
+*.backup2
+*.backup3
+*.before-local
+*.before_railway
+core

@@ -62,59 +62,45 @@
         </div>
     </div>
     <script>
-async function chargerHistorique() {
-    try {
-        const response = await fetch("/data");
-        const data = await response.json();
+        const ctxLine = document.getElementById('balanceChart').getContext('2d');
+        const balanceChart = new Chart(ctxLine, { type: 'line', data: { labels: [], datasets: [{ label: 'Capital (€)', data: [], borderColor: '#0ea5e9', borderWidth: 3, tension: 0.2, fill: false, pointRadius: 1 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { display: false } } } });
+        const ctxBar = document.getElementById('statsChart').getContext('2d');
+        const statsChart = new Chart(ctxBar, { type: 'bar', data: { labels: ['Échecs', 'Succès'], datasets: [{ data:, backgroundColor: ['#ef4444', '#10b981'] }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } } });
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            document.getElementById('last_real').innerText = data.last_real.toFixed(2) + 'x';
 
-        const historique =
-            data.crash_history ||
-            data.history ||
-            [];
+            const history = document.getElementById('crash_history');
+            history.innerHTML = '';
 
-        const history = document.getElementById("crash_history");
-
-        if (history) {
-            history.innerHTML = "";
-
-            historique.slice().reverse().forEach(mult => {
-                const item = document.createElement("span");
-
-                item.textContent =
-                    Number(mult).toFixed(2) + "x";
-
-                item.style.padding = "8px 12px";
-                item.style.margin = "4px";
-                item.style.display = "inline-block";
-                item.style.borderRadius = "8px";
-                item.style.background = "#1e293b";
-                item.style.color = "#fff";
-                item.style.fontWeight = "700";
-
+            (data.crash_history || []).slice().reverse().forEach((mult) => {
+                const item = document.createElement('span');
+                item.innerText = Number(mult).toFixed(2) + 'x';
+                item.style.padding = '8px 12px';
+                item.style.borderRadius = '8px';
+                item.style.background = '#1e293b';
+                item.style.fontWeight = '700';
                 history.appendChild(item);
             });
-        }
-
-        if (historique.length > 0) {
-            const dernier =
-                Number(historique[historique.length - 1]);
-
-            const last = document.getElementById("last_real");
-
-            if (last) {
-                last.textContent =
-                    dernier.toFixed(2) + "x";
+            document.getElementById('next_pred').innerText = data.next_pred.toFixed(2) + 'x';
+            document.getElementById('seuil_ejection').innerText = data.seuil_ejection.toFixed(2) + 'x';
+            document.getElementById('solde').innerText = data.solde.toFixed(2) + ' €';
+            document.getElementById('winrate').innerText = data.winrate.toFixed(1) + ' %';
+            document.getElementById('trades').innerText = data.trades;
+            document.getElementById('uncertainty').innerText = '± ' + data.uncertainty.toFixed(4);
+            const sig = document.getElementById('signal'); sig.innerText = data.signal;
+            sig.className = data.signal.includes('🟢') ? 'num green-signal' : 'num red-signal';
+            for(let i=0; i<3; i++) {
+                const val = data.pi_distribution[i];
+                document.getElementById(`bar${i+1}`).style.width = val + '%';
+                document.getElementById(`lbl${i+1}`).innerText = `Expert ${i+1} : ${val}%`;
             }
-        }
-
-    } catch (e) {
-        console.log("Erreur /data :", e);
-    }
-}
-
-chargerHistorique();
-
-setInterval(chargerHistorique, 1000);
-</script>
+            balanceChart.data.labels = Array.from({length: data.balance_history.length}, (_, i) => i);
+            balanceChart.data.datasets[0].data = data.balance_history; balanceChart.update('none');
+            statsChart.data.datasets[0].data = data.success_stats; statsChart.update('none');
+        };
+    </script>
 </body>
 </html>

@@ -4,48 +4,10 @@ import urllib.request
 import websocket
 import sys
 import re
-import requests
 
 CDP_HTTP = "http://127.0.0.1:9030"
 CRASH_URL = "1xbetmaroc.com"
 CRASH_SOCKET = "sockets/crash"
-RAILWAY_API = "https://web-production-5ddf7.up.railway.app/api/crash"
-
-def envoyer_railway(multiplier, timestamp, raw):
-    donnees = {
-        "multiplier": multiplier,
-        "timestamp": timestamp,
-        "ts": timestamp,
-        "source": "termux-cdp",
-        "raw": raw
-    }
-
-    try:
-        response = requests.post(
-            RAILWAY_API,
-            json=donnees,
-            timeout=10
-        )
-
-        print(
-            f"RAILWAY → HTTP {response.status_code}",
-            flush=True
-        )
-
-        if response.text:
-            print(
-                "RAILWAY REPONSE :",
-                response.text[:300],
-                flush=True
-            )
-
-    except Exception as e:
-        print(
-            "ERREUR RAILWAY :",
-            e,
-            flush=True
-        )
-
 
 print("=" * 70, flush=True)
 print("     CRASH CAPTURE - RAILWAY CDP", flush=True)
@@ -69,12 +31,11 @@ def trouver_page():
 
     for p in pages:
         url = p.get("url", "")
-
         if (
             p.get("type") == "page"
-            and "/games/crash" in url.lower()
+            and CRASH_URL in url
+            and "/games/crash" in url
         ):
-            print("PAGE CRASH TROUVÉE :", url, flush=True)
             return p
 
     print("Aucune page Crash trouvée.", flush=True)
