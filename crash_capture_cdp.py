@@ -7,7 +7,7 @@ import re
 import requests
 
 CDP_HTTP = "http://127.0.0.1:9030"
-CRASH_URL = "1xbetmaroc.com"
+CRASH_URL = "ma-1xbet.com"
 CRASH_SOCKET = "sockets/crash"
 RAILWAY_API = "https://web-production-5ddf7.up.railway.app/api/crash"
 

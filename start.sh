@@ -36,7 +36,7 @@ chromium \
     --user-data-dir=/tmp/chrome-profile \
     --window-size=1920,1080 \
     --user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" \
-    "https://1xbetmaroc.com/fr/games/crash" \
+    "https://ma-1xbet.com/fr/games/crash" \
     > /tmp/chromium.log 2>&1 &
 
 CHROME_PID=$!
